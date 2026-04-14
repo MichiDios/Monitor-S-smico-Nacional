@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monitor Sísmico Nacional</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+
+<style>
+:root {
+    --bg:#0b0d14;
+    --panel:#151826;
+    --text:#fff;
+    --header:#0f1320;
+}
+
+.light {
+    --bg:#f5f5f5;
+    --panel:#fff;
+    --text:#000;
+    --header:#ddd;
+}
+
+body {
+    margin:0;
+    font-family:sans-serif;
+    background:var(--bg);
+    color:var(--text);
+}
+
+header {
+    padding:15px;
+    background:var(--header);
+    text-align:center;
+    font-weight:bold;
+    position:relative;
+}
+
+#toggle {
+    position:absolute;
+    right:15px;
+    top:15px;
+    cursor:pointer;
+}
+
+.alerta {
+    background:red !important;
+    animation:parpadeo 1s infinite;
+}
+
+@keyframes parpadeo {
+    0%{opacity:1}
+    50%{opacity:0.3}
+    100%{opacity:1}
+}
+
+#reloj {
+    text-align:center;
+    font-size:14px;
+    padding:5px;
+}
+
+.ticker {
+    background:#ff2d2d;
+    color:white;
+    overflow:hidden;
+    white-space:nowrap;
+}
+
+.ticker span {
+    display:inline-block;
+    padding-left:100%;
+    animation:scroll 25s linear infinite;
+}
+
+@keyframes scroll {
+    0%{transform:translateX(0)}
+    100%{transform:translateX(-100%)}
+}
+
+#map {
+    height:55vh;
+}
+
+.panel {
+    padding:10px;
+}
+
+button {
+    padding:6px 10px;
+    margin:3px;
+    border:none;
+    border-radius:6px;
+    cursor:pointer;
+}
+
+.sismo {
+    background:var(--panel);
+    padding:10px;
+    margin:6px 0;
+    border-radius:10px;
+    cursor:pointer;
+}
+
+.alta { color:red; }
+.media { color:orange; }
+.baja { color:#4caf50; }
+
+</style>
+</head>
+
+<body>
+
+<header id="header">
+🇲🇽 Monitor Sísmico Nacional
+<span id="toggle">🌙</span>
+<div style="font-size:12px;opacity:0.7;">
+Sistema de monitoreo en tiempo real
+</div>
+</header>
+
+<div id="reloj"></div>
+
+<div class="ticker"><span id="ticker">Cargando sismos...</span></div>
+
+<div id="map"></div>
+
+<div class="panel">
+<button onclick="filtro=0;cargar()">Todos</button>
+<button onclick="filtro=3;cargar()">+3</button>
+<button onclick="filtro=5;cargar()">+5</button>
+
+<div id="lista"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script>
+const toggle = document.getElementById("toggle");
+
+function setTema(t){
+    document.body.classList.toggle("light", t==="light");
+    toggle.textContent = t==="light"?"☀️":"🌙";
+    localStorage.setItem("tema",t);
+}
+setTema(localStorage.getItem("tema")||"dark");
+
+function actualizarReloj(){
+    const ahora=new Date();
+    document.getElementById("reloj").innerText =
+        ahora.toLocaleString('es-MX',{
+            weekday:'long',
+            year:'numeric',
+            month:'long',
+            day:'numeric',
+            hour:'2-digit',
+            minute:'2-digit',
+            second:'2-digit',
+            hour12:false,
+            timeZoneName:'short'
+        });
+}
+setInterval(actualizarReloj,1000);
+actualizarReloj();
+
+const map=L.map('map').setView([19,-99],5);
+
+const oscuro=L.tileLayer(
+'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+).addTo(map);
+
+const claro=L.tileLayer(
+'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+);
+
+function actualizarMapa(){
+    if(document.body.classList.contains("light")){
+        map.removeLayer(oscuro);
+        claro.addTo(map);
+    } else {
+        map.removeLayer(claro);
+        oscuro.addTo(map);
+    }
+}
+
+toggle.onclick=()=>{
+    setTema(document.body.classList.contains("light")?"dark":"light");
+    actualizarMapa();
+};
+
+function alerta(){
+    const header=document.getElementById("header");
+    header.classList.add("alerta");
+
+    const audio=new Audio("https://www.soundjay.com/button/beep-07.wav");
+    audio.play();
+
+    if(navigator.vibrate){
+        navigator.vibrate([500,300,500]);
+    }
+
+    setTimeout(()=>{
+        header.classList.remove("alerta");
+    },5000);
+}
+
+let filtro=0;
+let markers=[];
+
+async function cargar(){
+    markers.forEach(m=>map.removeLayer(m));
+    markers=[];
+
+    const res=await fetch("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson");
+    const data=await res.json();
+
+    document.getElementById("lista").innerHTML="";
+    let tickerTxt="";
+
+    data.features.forEach(s=>{
+        const mag=s.properties.mag;
+        if(mag<filtro) return;
+
+        const lugar=s.properties.place;
+        const hora=new Date(s.properties.time).toLocaleTimeString();
+
+        tickerTxt+=`🌎 ${lugar} M${mag} — `;
+
+        const coords=s.geometry.coordinates;
+
+        let color="green";
+        if(mag>=5){ color="red"; alerta(); }
+        else if(mag>=3) color="orange";
+
+        const marker=L.circleMarker([coords[1],coords[0]],{
+            radius:mag*2,
+            color
+        }).addTo(map)
+        .bindPopup(`<b>${lugar}</b><br>M ${mag}<br>${hora}`);
+
+        markers.push(marker);
+
+        const div=document.createElement("div");
+        div.className="sismo";
+        div.innerHTML=`
+            <b>${lugar}</b><br>
+            <span class="${mag>=5?"alta":mag>=3?"media":"baja"}">
+            M ${mag}</span> - ${hora}
+        `;
+
+        div.onclick=()=>{
+            map.setView([coords[1],coords[0]],7);
+            marker.openPopup();
+        };
+
+        document.getElementById("lista").appendChild(div);
+    });
+
+    document.getElementById("ticker").innerText=tickerTxt;
+}
+
+cargar();
+setInterval(cargar,60000);
+</script>
+
+</body>
+</html>
